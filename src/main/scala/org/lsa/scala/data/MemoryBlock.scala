@@ -5,15 +5,28 @@ import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
 
 trait Serializer {
-  
+
   def encodingLength(s: Int): Byte
   def getTypeLength(code: Byte): Int
-  
+
   def anyToCode(v: Any): (Byte, Byte)
   def anyToCode(v: Any, bal: Int): Array[Byte]
 
   def anyToBytes(v: Any): Array[Byte]
   def bytesToAny(t: Byte, v: Array[Byte]): Any
+
+  def intListToBytes(l: List[Int]): Array[Byte]
+  def bytesToIntList(v: Array[Byte]): List[Int]
+
+  final val UNKNOWN: Byte = 0
+  final val BOOLEAN: Byte = 1
+  final val BYTE: Byte = 2
+  final val DOUBLE: Byte = 3
+  final val SHORT: Byte = 4
+  final val INT: Byte = 5
+  final val LONG: Byte = 6
+  final val STRING: Byte = 7
+  final val LIST: Byte = 8
 }
 
 object BasicSerializer extends Serializer {
@@ -26,13 +39,13 @@ object BasicSerializer extends Serializer {
   }
 
   def getTypeLength(code: Byte): Int = code match {
-    case 1 => 1
-    case 2 => 1
-    case 3 => 8
-    case 4 => 2
-    case 5 => 4
-    case 6 => 8
-    case _ => 0
+    case BOOLEAN => 1
+    case BYTE    => 1
+    case DOUBLE  => 8
+    case SHORT   => 2
+    case INT     => 4
+    case LONG    => 8
+    case _       => 0
   }
 
   def anyToBytes(v: Any): Array[Byte] = v match {
@@ -55,34 +68,43 @@ object BasicSerializer extends Serializer {
       s.foreach(bb.putChar)
       bb.array
     }
-    case l: List[Any] => {
-      val bb = ByteBuffer.allocate(0)
-      l.foreach { i: Any => 
-        bb.put(anyToBytes(i), 0, -1)
-      }
-      bb.array
-    }
+    case _ => new Array[Byte](0)
+  }
+
+  def intListToBytes(l: List[Int]): Array[Byte] = {
+    val len = l.length
+    val bb = ByteBuffer.allocate(4 * len)
+    for (i <- 0 until len) bb.putInt(i * 4, l(i))
+    bb.array
+  }
+
+  def bytesToIntList(v: Array[Byte]): List[Int] = {
+    val l: Int = v.length / 4
+    (for (i <- 0 until l) yield {
+      ByteBuffer.wrap(v, 4 * i, 4).asIntBuffer().get
+    }).toList
   }
 
   def bytesToAny(t: Byte, v: Array[Byte]): Any = t match {
-    case 1 => if (v(0) == 1) true else false
-    case 2 => v(0)
-    case 3 => ByteBuffer.wrap(v).asDoubleBuffer.get
-    case 4 => ByteBuffer.wrap(v).asShortBuffer.get
-    case 5 => ByteBuffer.wrap(v).asIntBuffer.get
-    case 6 => ByteBuffer.wrap(v).asLongBuffer.get
-    case 7 => new String(v, StandardCharsets.UTF_16)
-    case _ => None
+    case BOOLEAN => if (v(0) == 1) true else false
+    case BYTE    => v(0)
+    case DOUBLE  => ByteBuffer.wrap(v).asDoubleBuffer.get
+    case SHORT   => ByteBuffer.wrap(v).asShortBuffer.get
+    case INT     => ByteBuffer.wrap(v).asIntBuffer.get
+    case LONG    => ByteBuffer.wrap(v).asLongBuffer.get
+    case STRING  => new String(v, StandardCharsets.UTF_16)
+    case _       => None
   }
 
   def anyToCode(v: Any): (Byte, Byte) = v match {
-    case _: Boolean => (1, 0)
-    case _: Byte    => (2, 0)
-    case _: Double  => (3, 0)
-    case _: Short   => (4, 0)
-    case _: Int     => (5, 0)
-    case _: Long    => (6, 0)
-    case s: String  => (7, encodingLength(s.length))
+    case _: Boolean => (BOOLEAN, 0)
+    case _: Byte    => (BYTE, 0)
+    case _: Double  => (DOUBLE, 0)
+    case _: Short   => (SHORT, 0)
+    case _: Int     => (INT, 0)
+    case _: Long    => (LONG, 0)
+    case s: String  => (STRING, encodingLength(s.length))
+    case l: List[_] => (LIST, encodingLength(l.length))
     case _          => (0, 0)
   }
 
@@ -118,6 +140,7 @@ object MemoryBlock {
 
 final class MemoryBlock(pageSize: Int = MemoryBlock.defaultPageSize)(implicit bs: Serializer) extends PaginatedArray[Byte](pageSize) {
   import MemoryBlock._
+  import BasicSerializer._
 
   /**
    * Write a value
@@ -128,9 +151,21 @@ final class MemoryBlock(pageSize: Int = MemoryBlock.defaultPageSize)(implicit bs
     val bav = bs.anyToBytes(v)
     val bac = bs.anyToCode(v, bav.length)
 
-    writeElements(bac) + writeElements(bav)
+    synchronized[Int] {
+      writeElements(bac) + writeElements(bav)
+    }
   }
-  
+
+  def poke(l: List[Any]): Int = {
+    val items = for (v <- l) yield { insert(v) }
+    val bav = bs.intListToBytes(items)
+    val bac = bs.anyToCode(l, bav.length)
+
+    synchronized[Int] {
+      writeElements(bac) + writeElements(bav)
+    }
+  }
+
   /**
    * Insert a new value
    * @param v Value to write
@@ -143,10 +178,80 @@ final class MemoryBlock(pageSize: Int = MemoryBlock.defaultPageSize)(implicit bs
   })
 
   /**
+   * Insert a new value
+   * @param l List of values to write
+   * @return Offset of the list
+   */
+  def insert(l: List[Any]): Int = {
+    val items = for (v <- l) yield { insert(v) }
+    val bav = bs.intListToBytes(items)
+    val bac = bs.anyToCode(l, bav.length)
+
+    synchronized[Int] {
+      val offset: Int = getFreeOffset
+      writeElements(bac) + writeElements(bav)
+      offset
+    }
+  }
+
+  /**
+   * Append a value to an existing list
+   * @param offset Offset of original list
+   * @param v Value to append (at the end)
+   * @return Offset of the new list
+   * @note The original list is untouched
+   */
+  def append(offset: Int, v: Any): Int = {
+    val ov = insert(v)
+
+    val items: List[Int] = List(offset, ov)
+    val bav = bs.intListToBytes(items)
+    val bac = bs.anyToCode(items, bav.length)
+
+    synchronized[Int] {
+      val offset: Int = getFreeOffset
+      writeElements(bac) + writeElements(bav)
+      offset
+    }
+  }
+
+  /**
+   * Append a list to an existing list
+   * @param offset Offset of original list
+   * @param l Value to append (at the end)
+   * @return Offset of the new list
+   * @note The original list is untouched
+   */
+  def append(offset: Int, l: List[Any]): Int = {
+    val items: List[Int] = offset :: (for (v <- l) yield { insert(v) })
+
+    val bav = bs.intListToBytes(items)
+    val bac = bs.anyToCode(items, bav.length)
+
+    synchronized[Int] {
+      val offset: Int = getFreeOffset
+      writeElements(bac) + writeElements(bav)
+      offset
+    }
+  }
+
+  /**
    * Read one byte (with default value)
    */
   private def byteAt(offset: Int, default: Byte = 0): Byte = readElement(offset).getOrElse(default)
 
+  private def typeOf(offset: Int): Byte = (byteAt(offset) & 0x0f).toByte
+  
+  def isList(offset: Int): Boolean = (typeOf(offset) == LIST)
+
+  private def flattenList(al: List[Any]): List[Any] = al match {
+    case Nil => Nil
+    case h :: t => h match {
+      case sl: List[Any] => flattenList(sl) ::: flattenList(t)
+      case _ => h :: flattenList(t)
+    }
+  }
+  
   /**
    * Read a value from paginated byte array
    * @param offset Value offset in array
@@ -166,8 +271,18 @@ final class MemoryBlock(pageSize: Int = MemoryBlock.defaultPageSize)(implicit bs
     if (vlen == 0) (None, clen + vlen)
     else {
       val bav: Option[Array[Byte]] = readElements(offset + 1 + clen, vlen)
-      if (bav.isEmpty) (None, 1 + clen + vlen)
-      else (Some(bs.bytesToAny(code, bav.get)), 1 + clen + vlen)
+
+      if (code == LIST) {
+        if (bav.isEmpty) (Some(Nil), 1 + clen + vlen)
+        else {
+          val items = bs.bytesToIntList(bav.get)
+          val list = flattenList(items.map(ix => innerPeek(ix)._1.get))
+          (Some(list), 1 + clen + vlen)
+        }
+      } else {
+        if (bav.isEmpty) (None, 1 + clen + vlen)
+        else (Some(bs.bytesToAny(code, bav.get)), 1 + clen + vlen)
+      }
     }
   }
 
@@ -180,4 +295,12 @@ final class MemoryBlock(pageSize: Int = MemoryBlock.defaultPageSize)(implicit bs
   def peek(offset: Int, default: Any): Any = innerPeek(offset)._1.getOrElse(default)
   def peek(offset: Int): Option[Any] = innerPeek(offset)._1
 
+  
+  def bdump(offset: Int = 0): Unit = {
+     val (v: Option[Any], s: Int) = innerPeek(offset)
+     if (s > 0) {
+       println("@" + offset + " -> " + v.getOrElse("nothing"))
+       bdump(offset+s)
+     }
+  }
 }

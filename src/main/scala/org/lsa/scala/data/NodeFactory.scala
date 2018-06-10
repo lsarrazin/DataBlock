@@ -32,7 +32,10 @@ class NodeFactory(treeSize: Int = 128, dataSize: Int = 2048) /*extends NodeRunne
   private val hash: HashArray = new HashArray(treeSize, dataSize)
   
   private val emptyNode: Array[Int] = Array[Int](-1, -1, -1, -1, -1)
-  private def leafNode(name: String, value: Any): Array[Int] = Array[Int](hash.put(name), data.insert(value), -1, -1, -1)
+  private def leafNode(name: String, value: Any): Array[Int] = value match {
+    case l: List[_] => Array[Int](hash.put(name), data.insert(l), -1, -1, -1)
+    case _ => Array[Int](hash.put(name), data.insert(value), -1, -1, -1)
+  }
   
   private def readName(node: Int): Int = tree.readElement(node + 0).getOrElse(-1)
   private def readValue(node: Int): Int = tree.readElement(node + 1).getOrElse(-1)
@@ -62,7 +65,13 @@ class NodeFactory(treeSize: Int = 128, dataSize: Int = 2048) /*extends NodeRunne
   def setName(node: Int, name: String): Unit = writeName(node, hash.put(name))
   def getName(node: Int): String = hash.get(readName(node)).getOrElse("")  
   
-  def setValue(node: Int, value: Any): Unit = writeValue(node, data.insert(value))
+  def setValue(node: Int, value: Any): Unit = {
+    val ov: Int = readValue(node)
+    writeValue(node, value match {
+      case l: List[_] => if (ov >= 0) data.append(ov, l) else data.insert(l)
+      case _ => if (ov >= 0) data.append(ov, value) else data.insert(value)
+    })
+  }
   def getValue(node: Int): Option[Any] = data.peek(readValue(node))
   
   def getParent(node: Int): Node = {
@@ -196,6 +205,8 @@ class NodeFactory(treeSize: Int = 128, dataSize: Int = 2048) /*extends NodeRunne
     if (node == -1) 0
     else (if (readValue(node) == -1) 0 else 1) + childrenLength(readChild(node)) 
   }
+  
+  def mdump: Unit = data.bdump(0)
 
   def dump(node: Int, pad: Int = 0): Unit = {
     val pstr: String = " " * pad

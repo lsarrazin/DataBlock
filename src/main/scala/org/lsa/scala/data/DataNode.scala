@@ -35,14 +35,31 @@ class RootDataNode(root: RootNode)(implicit factory: NodeFactory) extends DataNo
   def innerNode: Node = root
   def newNode: DataNode = new DataNodeBinder(factory.newNode)
 
-  def put(name: String, value: Any): DataNode = value match {
-    case dn: DataNode => {
-      dn.innerNode.setName(name)
-      root.addChild(dn.innerNode)
-      this
-    }
-    case _ => {
-      root.addChild(factory.newNode(name, value))
+  def put(name: String, value: Any): DataNode = {
+    val node = root.findNode(name)
+    if (node == NoNode) {
+      // Append as new node
+      value match {
+        case dn: DataNode => {
+          dn.innerNode.setName(name)
+          root.addChild(dn.innerNode)
+          this
+        }
+        case _ => {
+          root.addChild(factory.newNode(name, value))
+          this
+        }
+      }
+    } else {
+      // Append as list element
+      value match {
+        case dn: DataNode => {
+
+        }
+        case _ => {
+          node.setValue(value)
+        }
+      }
       this
     }
   }
@@ -55,7 +72,10 @@ class RootDataNode(root: RootNode)(implicit factory: NodeFactory) extends DataNo
   def isEmpty: Boolean = factory.isEmpty
   def length: Int = factory.length
 
-  def dump: Unit = factory.dump(root.getCode)
+  def dump: Unit = {
+    factory.mdump
+    factory.dump(root.getCode)
+  }
 }
 
 class DataNodeBinder(bound: NamedNode)(implicit factory: NodeFactory) extends DataNode {
@@ -63,14 +83,32 @@ class DataNodeBinder(bound: NamedNode)(implicit factory: NodeFactory) extends Da
   def innerNode: Node = bound
   def newNode: DataNode = new DataNodeBinder(factory.newNode)
 
-  def put(name: String, value: Any): DataNode = value match {
-    case dn: DataNode => {
-      dn.innerNode.setName(name)
-      bound.addChild(dn.innerNode)
-      this
-    }
-    case _ => {
-      bound.addChild(factory.newNode(name, value))
+  def put(name: String, value: Any): DataNode = {
+    val node = bound.findNode(name)
+    if (node == NoNode) {
+      // Append as new node
+      value match {
+
+        case dn: DataNode => {
+          dn.innerNode.setName(name)
+          bound.addChild(dn.innerNode)
+          this
+        }
+        case _ => {
+          bound.addChild(factory.newNode(name, value))
+          this
+        }
+      }
+    } else {
+      // Append as list element
+      value match {
+        case dn: DataNode => {
+
+        }
+        case _ => {
+          node.setValue(value)
+        }
+      }
       this
     }
   }

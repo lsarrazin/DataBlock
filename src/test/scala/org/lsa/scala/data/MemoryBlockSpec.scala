@@ -202,5 +202,72 @@ class MemoryBlockSpec extends FreeSpec {
     }
 
   }
+  
+  "An empty memory block" - {
+    
+    val mb = MemoryBlock.newBlock(256)
+    val v1 = List(1, 2, 3, 4)
+    val t1 = mb.insert(v1)
+    
+    "should chain values" in {
+      assert(t1 > 0)
+    }
+    
+    "should retain correct length" in {
+      assert(mb.length == 38)
+    }
+    
+    "must recall written values" in {
+      val vv1 = mb.peek(t1, Nil)
+      assert(mb.peek(t1, Nil) === v1)
+    }
+    
+    "but also record heterogenous values" in {
+      val v2 = List(true, 123.toByte, 8192.toShort, 12345678, Long.MaxValue / 2, "Hello world", "ABC" * 10)
+      val t2 = mb.insert(v2)
+      assert(mb.length == 175)
+      val vv2 = mb.peek(t2, Nil)
+      assert(mb.peek(t2, Nil) === v2)
+      val vv1 = mb.peek(t1, Nil)
+      assert(mb.peek(t1, Nil) === v1)
+    }
+    
+  }
+  
+  "Any list may be extended with new values" in {
+
+    val mb = MemoryBlock.newBlock(256)
+    val v1 = List(1, 2, 3, 4)
+    val t1 = mb.insert(v1)
+    
+    val t2 = mb.append(t1, Nil)
+    assert(mb.length == 44)
+
+    val t3 = mb.append(t2, true)
+    assert(mb.length == 56)
+
+    val t4 = mb.append(t3, List(1, 2))
+    assert(mb.length == 80)
+    
+    val vv1 = mb.peek(t4)
+    assert(vv1.contains(List(1, 2, 3, 4, true, 1, 2)))
+    assert(mb.peek(t1).contains(List(1,2,3,4)))
+  }
+
+  "Any value may be extended to a list" in {
+
+    val mb = MemoryBlock.newBlock(256)
+    
+    val t1 = mb.insert(1)
+    val t2 = mb.insert(true)
+    val t3 = mb.insert(3)
+    
+    val t4 = mb.append(t2, false)
+    
+    assert(mb.peek(t1).contains(1))
+    assert(mb.peek(t4).contains(List(true, false)))
+    assert(mb.peek(t3).contains(3))
+    
+  }
 
 }
