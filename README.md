@@ -1,6 +1,7 @@
 # Overview
 
 DataBlock is a library to record & process a native JSon-like structure in scala.
+The idea behind DataBlock is to experiment a memory structure that is much more compact than regular scala memory storage.
 
 ## Data structure
 
